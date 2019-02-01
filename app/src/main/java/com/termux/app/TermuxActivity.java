@@ -603,7 +603,14 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             new AlertDialog.Builder(this).setTitle(R.string.max_terminals_reached_title).setMessage(R.string.max_terminals_reached_message)
                 .setPositiveButton(android.R.string.ok, null).show();
         } else {
-            TerminalSession newSession = mTermService.createTermSession(null, null, null, failSafe);
+            String workingDirectory = null;
+            if (mSettings.mUseCurrentSessionCwd) {
+                final TerminalSession currentSession = getCurrentTermSession();
+                if (currentSession != null) {
+                    workingDirectory = currentSession.getCwd();
+                }
+            }
+            TerminalSession newSession = mTermService.createTermSession(null, null, workingDirectory, failSafe);
             if (sessionName != null) {
                 newSession.mSessionName = sessionName;
             }

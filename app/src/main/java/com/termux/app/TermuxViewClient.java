@@ -83,6 +83,8 @@ public final class TermuxViewClient implements TerminalViewClient {
                 mActivity.renameSession(currentSession);
             } else if (unicodeChar == 'c'/* create */) {
                 mActivity.addNewSession(false, null);
+            } else if (unicodeChar == 'o'/* create with cwd */) {
+                mActivity.addNewSession(false, null, true);
             } else if (unicodeChar == 'u' /* urls */) {
                 mActivity.showUrlSelection();
             } else if (unicodeChar == 'v') {
@@ -246,6 +248,9 @@ public final class TermuxViewClient implements TerminalViewClient {
                                 return true;
                             case TermuxPreferences.SHORTCUT_ACTION_RENAME_SESSION:
                                 mActivity.renameSession(mActivity.getCurrentTermSession());
+                                return true;
+                            case TermuxPreferences.SHORTCUT_ACTION_CREATE_SESSION_WITH_CWD:
+                                mActivity.addNewSession(false, null, true);
                                 return true;
                         }
                     }

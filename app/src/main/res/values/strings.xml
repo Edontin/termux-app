@@ -37,6 +37,7 @@
   <string name="session_rename_positive_button">Set</string>
   <string name="session_new_named_title">New named session</string>
   <string name="session_new_named_positive_button">Create</string>
+  <string name="session_use_current_working_directory">Use the current shell\'s working directory</string>
 
   <string name="styling_not_installed">The Termux:Style add-on is not installed.</string>
   <string name="styling_install">Install</string>

@@ -284,9 +284,12 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         View newSessionButton = findViewById(R.id.new_session_button);
         newSessionButton.setOnClickListener(v -> addNewSession(false, null));
         newSessionButton.setOnLongClickListener(v -> {
-            DialogUtils.textInput(TermuxActivity.this, R.string.session_new_named_title, null, R.string.session_new_named_positive_button,
-                text -> addNewSession(false, text), R.string.new_session_failsafe, text -> addNewSession(true, text)
-                , -1, null, null);
+            DialogUtils.textInputWithMultiSelect(TermuxActivity.this, R.string.session_new_named_title, null, R.string.session_new_named_positive_button,
+                (text, checkboxes)  -> addNewSession(false, text, checkboxes[0]),
+                R.string.new_session_failsafe,
+                (text, checkboxes) -> addNewSession(true, text, checkboxes[0]),
+                -1, null, null,
+                R.string.session_use_current_working_directory);
             return true;
         });
 
@@ -568,6 +571,10 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
     }
 
     void addNewSession(boolean failSafe, String sessionName) {
+        addNewSession(failSafe, sessionName, false);
+    }
+
+    void addNewSession(boolean failSafe, String sessionName, boolean useCurrentSessionCwd) {
         if (mTermService.getSessions().size() >= MAX_SESSIONS) {
             new AlertDialog.Builder(this).setTitle(R.string.max_terminals_reached_title).setMessage(R.string.max_terminals_reached_message)
                 .setPositiveButton(android.R.string.ok, null).show();
@@ -585,7 +592,15 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 }
             }
             String executablePath = (failSafe ? "/system/bin/sh" : null);
-            TerminalSession newSession = mTermService.createTermSession(executablePath, null, null, failSafe);
+            String workingDirectory = null;
+            if (useCurrentSessionCwd) {
+                final TerminalSession currentSession = getCurrentTermSession();
+                if (currentSession != null) {
+                    workingDirectory = currentSession.getCwd();
+                }
+            }
+
+            TerminalSession newSession = mTermService.createTermSession(executablePath, null, workingDirectory, failSafe);
             if (sessionName != null) {
                 newSession.mSessionName = sessionName;
             }

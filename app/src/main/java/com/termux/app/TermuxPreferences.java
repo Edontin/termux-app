@@ -45,6 +45,7 @@ final class TermuxPreferences {
     static final int SHORTCUT_ACTION_NEXT_SESSION = 2;
     static final int SHORTCUT_ACTION_PREVIOUS_SESSION = 3;
     static final int SHORTCUT_ACTION_RENAME_SESSION = 4;
+    static final int SHORTCUT_ACTION_CREATE_SESSION_WITH_CWD = 5;
 
     static final int BELL_VIBRATE = 1;
     static final int BELL_BEEP = 2;
@@ -197,6 +198,7 @@ final class TermuxPreferences {
         parseAction("shortcut.next-session", SHORTCUT_ACTION_NEXT_SESSION, props);
         parseAction("shortcut.previous-session", SHORTCUT_ACTION_PREVIOUS_SESSION, props);
         parseAction("shortcut.rename-session", SHORTCUT_ACTION_RENAME_SESSION, props);
+        parseAction("shortcut.create-session-with-cwd", SHORTCUT_ACTION_CREATE_SESSION_WITH_CWD, props);
     }
 
     private void parseAction(String name, int shortcutAction, Properties props) {

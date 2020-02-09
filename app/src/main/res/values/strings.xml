@@ -4,6 +4,7 @@
     <string name="shared_user_label">Termux user</string>
     <string name="new_session">New session</string>
     <string name="new_session_failsafe">Failsafe</string>
+    <string name="new_session_profile_dialog_title">Pick a profile to use</string>
     <string name="toggle_soft_keyboard">Keyboard</string>
     <string name="reset_terminal">Reset</string>
     <string name="style_terminal">Style</string>
@@ -29,6 +30,13 @@
     <string name="select_url_no_found">No URL found in the terminal.</string>
     <string name="select_url_copied_to_clipboard">URL copied to clipboard</string>
     <string name="share_transcript_chooser_title">Send text to:</string>
+
+    <string name="profile">Profile</string>
+    <string name="switch_profile">Switch profile</string>
+    <string name="switch_profile_dialog_title">Pick an item to switch the active profile</string>
+    <string name="switch_profile_no_other_profiles_title">There is only one profile</string>
+    <string name="switch_profile_no_other_profiles_body">Create a new profile and reload Termux\'s settings.</string>
+    <string name="switch_profile_complete">Switched to profile (%s)</string>
 
     <string name="kill_process">Kill process (%d)</string>
     <string name="confirm_kill_process">Really kill this session?</string>

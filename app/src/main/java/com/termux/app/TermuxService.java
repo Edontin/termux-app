@@ -82,6 +82,9 @@ public final class TermuxService extends Service implements SessionChangedCallba
      */
     final List<TerminalSession> mTerminalSessions = new ArrayList<>();
 
+    /** Contains the profile IDs for each terminal session. */
+    final List<String> mSessionProfiles = new ArrayList<>();
+
     final List<BackgroundJob> mBackgroundTasks = new ArrayList<>();
 
     /** Note that the service may often outlive the activity, so need to clear this reference. */
@@ -153,7 +156,7 @@ public final class TermuxService extends Service implements SessionChangedCallba
                 updateNotification();
             } else {
                 boolean failsafe = intent.getBooleanExtra(TermuxActivity.TERMUX_FAILSAFE_SESSION_ACTION, false);
-                TerminalSession newSession = createTermSession(executablePath, arguments, cwd, failsafe);
+                TerminalSession newSession = createTermSession(executablePath, arguments, cwd, failsafe, TermuxPreferences.DEFAULT_PROFILE_ID);
 
                 // Transform executable path to session name, e.g. "/bin/do-something.sh" => "do something.sh".
                 if (executablePath != null) {
@@ -275,11 +278,15 @@ public final class TermuxService extends Service implements SessionChangedCallba
             mTerminalSessions.get(i).finishIfRunning();
     }
 
+    public List<String> getSessionProfiles() {
+        return mSessionProfiles;
+    }
+
     public List<TerminalSession> getSessions() {
         return mTerminalSessions;
     }
 
-    TerminalSession createTermSession(String executablePath, String[] arguments, String cwd, boolean failSafe) {
+    TerminalSession createTermSession(String executablePath, String[] arguments, String cwd, boolean failSafe, String profileId) {
         new File(HOME_PATH).mkdirs();
 
         if (cwd == null) cwd = HOME_PATH;
@@ -317,6 +324,7 @@ public final class TermuxService extends Service implements SessionChangedCallba
 
         TerminalSession session = new TerminalSession(executablePath, cwd, args, env, this);
         mTerminalSessions.add(session);
+        mSessionProfiles.add(profileId);
         updateNotification();
 
         // Make sure that terminal styling is always applied.
@@ -330,6 +338,7 @@ public final class TermuxService extends Service implements SessionChangedCallba
     public int removeTermSession(TerminalSession sessionToRemove) {
         int indexOfRemoved = mTerminalSessions.indexOf(sessionToRemove);
         mTerminalSessions.remove(indexOfRemoved);
+        mSessionProfiles.remove(indexOfRemoved);
         if (mTerminalSessions.isEmpty() && mWakeLock == null) {
             // Finish if there are no sessions left and the wake lock is not held, otherwise keep the service alive if
             // holding wake lock since there may be daemon processes (e.g. sshd) running.

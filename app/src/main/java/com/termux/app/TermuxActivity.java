@@ -2,7 +2,6 @@ package com.termux.app;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
@@ -11,6 +10,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
@@ -21,7 +21,6 @@ import android.graphics.Typeface;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.text.SpannableString;
@@ -56,6 +55,7 @@ import com.termux.view.TerminalView;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -92,6 +92,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
     private static final int CONTEXTMENU_STYLING_ID = 6;
     private static final int CONTEXTMENU_HELP_ID = 8;
     private static final int CONTEXTMENU_TOGGLE_KEEP_SCREEN_ON = 9;
+    private static final int CONTEXTMENU_SWITCH_PROFILE_ID = 10;
 
     private static final int MAX_SESSIONS = 8;
 
@@ -107,6 +108,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
     ExtraKeysView mExtraKeysView;
 
     TermuxPreferences mSettings;
+    TermuxPreferences.TermuxProfile mCurrentProfile;
 
     /**
      * The connection to the {@link TermuxService}. Requested in {@link #onCreate(Bundle)} with a call to
@@ -147,8 +149,12 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 checkForFontAndColors();
                 mSettings.reloadFromProperties(TermuxActivity.this);
 
-                if (mExtraKeysView != null) {
-                    mExtraKeysView.reload(mSettings.mExtraKeys, ExtraKeysView.defaultCharDisplay);
+                if (mCurrentProfile != null) {
+                    updateSessionProfile(mCurrentProfile.id);
+
+                    if (mExtraKeysView != null) {
+                        mExtraKeysView.reload(mCurrentProfile.mExtraKeys, ExtraKeysView.defaultCharDisplay);
+                    }
                 }
             }
         }
@@ -200,7 +206,9 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
     @Override
     public void onCreate(Bundle bundle) {
         mSettings = new TermuxPreferences(this);
-        mIsUsingBlackUI = mSettings.isUsingBlackUI();
+        // Load default profile for onCreate.
+        mCurrentProfile = mSettings.getProfileById(TermuxPreferences.DEFAULT_PROFILE_ID);
+        mIsUsingBlackUI = mCurrentProfile.isUsingBlackUI();
         if (mIsUsingBlackUI) {
             this.setTheme(R.style.Theme_Termux_Black);
         } else {
@@ -229,7 +237,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
 
 
         ViewGroup.LayoutParams layoutParams = viewPager.getLayoutParams();
-        layoutParams.height = layoutParams.height * mSettings.mExtraKeys.length;
+        layoutParams.height = layoutParams.height * mCurrentProfile.mExtraKeys.length;
         viewPager.setLayoutParams(layoutParams);
 
         viewPager.setAdapter(new PagerAdapter() {
@@ -250,7 +258,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 View layout;
                 if (position == 0) {
                     layout = mExtraKeysView = (ExtraKeysView) inflater.inflate(R.layout.extra_keys_main, collection, false);
-                    mExtraKeysView.reload(mSettings.mExtraKeys, ExtraKeysView.defaultCharDisplay);
+                    mExtraKeysView.reload(mCurrentProfile.mExtraKeys, ExtraKeysView.defaultCharDisplay);
                 } else {
                     layout = inflater.inflate(R.layout.extra_keys_right, collection, false);
                     final EditText editText = layout.findViewById(R.id.text_input);
@@ -294,8 +302,21 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         View newSessionButton = findViewById(R.id.new_session_button);
         newSessionButton.setOnClickListener(v -> addNewSession(false, null));
         newSessionButton.setOnLongClickListener(v -> {
-            DialogUtils.textInput(TermuxActivity.this, R.string.session_new_named_title, null, R.string.session_new_named_positive_button,
-                text -> addNewSession(false, text), R.string.new_session_failsafe, text -> addNewSession(true, text)
+            final List<TermuxPreferences.TermuxProfile> profiles =
+                new ArrayList<>(mSettings.termuxProfiles.values());
+            final String[] profileDisplayNames = new String[profiles.size()];
+
+            for (int i = 0; i < profiles.size(); i++) {
+                profileDisplayNames[i] = profiles.get(i).displayName;
+            }
+
+            DialogUtils.textInputWithSpinner(TermuxActivity.this,
+                R.string.session_new_named_title, null,
+                profileDisplayNames,
+                R.string.session_new_named_positive_button,
+                (text, profileIndex) -> addNewSession(false, text, profiles.get(profileIndex).id),
+                R.string.new_session_failsafe,
+                (text, profileIndex) -> addNewSession(true, text, profiles.get(profileIndex).id)
                 , -1, null, null);
             return true;
         });
@@ -405,7 +426,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             public void onBell(TerminalSession session) {
                 if (!mIsVisible) return;
 
-                switch (mSettings.mBellBehaviour) {
+                switch (mCurrentProfile.mBellBehaviour) {
                     case TermuxPreferences.BELL_BEEP:
                         mBellSoundPool.play(mBellSoundId, 1.f, 1.f, 1, 0, 1.f);
                         break;
@@ -475,8 +496,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         };
         listView.setAdapter(mListViewAdapter);
         listView.setOnItemClickListener((parent, view, position, id) -> {
-            TerminalSession clickedSession = mListViewAdapter.getItem(position);
-            switchToSession(clickedSession);
+            switchToSession(position);
             getDrawer().closeDrawers();
         });
         listView.setOnItemLongClickListener((parent, view, position, id) -> {
@@ -511,7 +531,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 boolean failSafe = i.getBooleanExtra(TERMUX_FAILSAFE_SESSION_ACTION, false);
                 addNewSession(failSafe, null);
             } else {
-                switchToSession(getStoredCurrentSessionOrLast());
+                switchToSession(getStoredCurrentSessionIndexOrLast());
             }
         }
     }
@@ -524,7 +544,8 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         } else {
             if (--index < 0) index = mTermService.getSessions().size() - 1;
         }
-        switchToSession(mTermService.getSessions().get(index));
+        switchToSession(mTermService.getSessions().get(index),
+            mTermService.getSessionProfiles().get(index));
     }
 
     @SuppressLint("InflateParams")
@@ -553,7 +574,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
 
         if (mTermService != null) {
             // The service has connected, but data may have changed since we were last in the foreground.
-            switchToSession(getStoredCurrentSessionOrLast());
+            switchToSession(getStoredCurrentSessionIndexOrLast());
             mListViewAdapter.notifyDataSetChanged();
         }
 
@@ -598,27 +619,73 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         return (DrawerLayout) findViewById(R.id.drawer_layout);
     }
 
+    void newSessionWithProfileDialog(boolean failSafe, String sessionName) {
+        if (mSettings.getProfileCount() > 1) {
+            showProfilePicker(R.string.new_session_profile_dialog_title, (di, profile) -> {
+                di.dismiss();
+                addNewSession(failSafe, sessionName, profile.id);
+            });
+        }
+    }
+
     void addNewSession(boolean failSafe, String sessionName) {
+        // Inherit the current profile in new sessions.
+        addNewSession(failSafe, sessionName, TermuxPreferences.DEFAULT_PROFILE_ID);
+    }
+
+    void addNewSession(boolean failSafe, String sessionName, String profileId) {
         if (mTermService.getSessions().size() >= MAX_SESSIONS) {
             new AlertDialog.Builder(this).setTitle(R.string.max_terminals_reached_title).setMessage(R.string.max_terminals_reached_message)
                 .setPositiveButton(android.R.string.ok, null).show();
         } else {
             TerminalSession currentSession = getCurrentTermSession();
-            String workingDirectory = (currentSession == null) ? null : currentSession.getCwd();
-            TerminalSession newSession = mTermService.createTermSession(null, null, workingDirectory, failSafe);
+            String workingDirectory = null;
+            TermuxPreferences.TermuxProfile targetProfile = mSettings.getProfileById(profileId);
+            if (currentSession != null &&
+                targetProfile != null &&
+                targetProfile.mUseCurrentSessionCwd) {
+                workingDirectory = currentSession.getCwd();
+            }
+            TerminalSession newSession = mTermService.createTermSession(null, null, workingDirectory, failSafe, profileId);
             if (sessionName != null) {
                 newSession.mSessionName = sessionName;
             }
-            switchToSession(newSession);
+            switchToSession(newSession, profileId);
             getDrawer().closeDrawers();
         }
     }
 
+    void switchToSession(int sessionIndex) {
+        final List<TerminalSession> sessions = mTermService.getSessions();
+        final List<String> sessionProfiles = mTermService.getSessionProfiles();
+        TerminalSession session = null;
+        String profileId = null;
+
+        if (sessionIndex >= 0 &&
+            sessionIndex < sessions.size()) {
+            session = sessions.get(sessionIndex);
+            profileId = sessionProfiles.get(sessionIndex);
+        }
+        switchToSession(session, profileId);
+    }
+
     /** Try switching to session and note about it, but do nothing if already displaying the session. */
-    void switchToSession(TerminalSession session) {
+    void switchToSession(TerminalSession session, String profileId) {
         if (mTerminalView.attachSession(session)) {
             noteSessionInfo();
             updateBackgroundColor();
+            updateSessionProfile(profileId);
+        }
+    }
+
+    /** Try switching to a profile by ID. If the ID does not exist, use the default */
+    void updateSessionProfile(String profileId) {
+        TermuxPreferences.TermuxProfile profile = mSettings.getProfileById(profileId);
+
+        if (profile != null) {
+            mCurrentProfile = profile;
+        } else {
+            mCurrentProfile = mSettings.getProfileById(TermuxPreferences.DEFAULT_PROFILE_ID);
         }
     }
 
@@ -660,6 +727,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
         menu.add(Menu.NONE, CONTEXTMENU_STYLING_ID, Menu.NONE, R.string.style_terminal);
         menu.add(Menu.NONE, CONTEXTMENU_TOGGLE_KEEP_SCREEN_ON, Menu.NONE, R.string.toggle_keep_screen_on).setCheckable(true).setChecked(mSettings.isScreenAlwaysOn());
         menu.add(Menu.NONE, CONTEXTMENU_HELP_ID, Menu.NONE, R.string.help);
+        menu.add(Menu.NONE, CONTEXTMENU_SWITCH_PROFILE_ID, Menu.NONE, R.string.switch_profile);
     }
 
     /** Hook system menu to show context menu instead. */
@@ -867,9 +935,64 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
                 }
                 return true;
             }
+            case CONTEXTMENU_SWITCH_PROFILE_ID:
+                showProfileSwitcher();
+                return true;
             default:
                 return super.onContextItemSelected(item);
         }
+    }
+
+    @FunctionalInterface
+    interface ProfileChoiceListener {
+        void onChoice(DialogInterface di, TermuxPreferences.TermuxProfile profile);
+    }
+
+    private void showProfileSwitcher() {
+        showProfilePicker(R.string.switch_profile_dialog_title, (di, profile) -> {
+            di.dismiss();
+            final int indexOfCurrent = mTermService.getSessions().indexOf(getCurrentTermSession());
+
+            mCurrentProfile = profile;
+            mTermService.getSessionProfiles().set(indexOfCurrent, profile.id);
+            Toast.makeText(TermuxActivity.this,
+                getResources().getString(
+                    R.string.switch_profile_complete,
+                    mCurrentProfile.displayName),
+                Toast.LENGTH_LONG).show();
+        });
+    }
+
+    private void showProfilePicker(int titleResource, ProfileChoiceListener listener) {
+        final int profileCount = mSettings.getProfileCount();
+
+        if (profileCount <= 1) {
+            new AlertDialog.Builder(this)
+                .setTitle(R.string.switch_profile_no_other_profiles_title)
+                .setMessage(R.string.switch_profile_no_other_profiles_body)
+                .setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+        final List<TermuxPreferences.TermuxProfile> profiles =
+            new ArrayList<>(mSettings.termuxProfiles.values());
+        final String[] profileDisplayNames = new String[profiles.size()];
+        int currentProfileIndex = -1;
+
+        for (int i = 0; i < profileCount; i++) {
+            TermuxPreferences.TermuxProfile profile = profiles.get(i);
+
+            profileDisplayNames[i] = profile.displayName;
+            // Default to the current profile.
+            if (profile == mCurrentProfile) {
+                currentProfileIndex = i;
+            }
+        }
+
+        final AlertDialog dialog = new AlertDialog.Builder(TermuxActivity.this)
+            .setSingleChoiceItems(profileDisplayNames, currentProfileIndex,
+                (di, which) -> listener.onChoice(di, profiles.get(which)))
+            .setTitle(titleResource).create();
+        dialog.show();
     }
 
     @Override
@@ -894,11 +1017,11 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
     }
 
     /** The current session as stored or the last one if that does not exist. */
-    public TerminalSession getStoredCurrentSessionOrLast() {
-        TerminalSession stored = TermuxPreferences.getCurrentSession(this);
-        if (stored != null) return stored;
+    public int getStoredCurrentSessionIndexOrLast() {
+        int stored = TermuxPreferences.getCurrentSessionIndex(this);
+        if (stored >= 0) return stored;
         List<TerminalSession> sessions = mTermService.getSessions();
-        return sessions.isEmpty() ? null : sessions.get(sessions.size() - 1);
+        return sessions.isEmpty() ? -1 : sessions.size() - 1;
     }
 
     /** Show a toast and dismiss the last one if still visible. */
@@ -922,7 +1045,7 @@ public final class TermuxActivity extends Activity implements ServiceConnection 
             if (index >= service.getSessions().size()) {
                 index = service.getSessions().size() - 1;
             }
-            switchToSession(service.getSessions().get(index));
+            switchToSession(index);
         }
     }
 

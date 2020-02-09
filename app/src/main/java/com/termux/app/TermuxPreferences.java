@@ -11,6 +11,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.io.File;
+import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -18,19 +19,41 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Properties;
 
 import androidx.annotation.IntDef;
 
 final class TermuxPreferences {
-
     @IntDef({BELL_VIBRATE, BELL_BEEP, BELL_IGNORE})
     @Retention(RetentionPolicy.SOURCE)
     @interface AsciiBellBehaviour {
     }
 
-    final static class KeyboardShortcut {
+    static final class TermuxProfile {
+        String id;
+        String displayName;
+
+        @AsciiBellBehaviour
+        int mBellBehaviour = BELL_VIBRATE;
+
+        boolean mBackIsEscape;
+        boolean mDisableVolumeVirtualKeys;
+        String mUseDarkUI;
+
+        boolean mUseCurrentSessionCwd;
+
+        String[][] mExtraKeys;
+
+        final List<KeyboardShortcut> shortcuts = new ArrayList<>();
+
+        boolean isUsingBlackUI() {
+            return "true".equalsIgnoreCase(mUseDarkUI);
+        }
+    }
+
+    static final class KeyboardShortcut {
 
         KeyboardShortcut(int codePoint, int shortcutAction) {
             this.codePoint = codePoint;
@@ -58,20 +81,19 @@ final class TermuxPreferences {
     private static final String CURRENT_SESSION_KEY = "current_session";
     private static final String SCREEN_ALWAYS_ON_KEY = "screen_always_on";
 
-    private String mUseDarkUI;
+    static final String DEFAULT_PROFILE_ID = "default";
+    private static final String TERMUX_CONF_DIR = TermuxService.HOME_PATH + "/.termux";
+    private static final String TERMUX_CONF_PROFILES_DIR = TERMUX_CONF_DIR + "/profiles";
+    private static final String TERMUX_XDG_CONF_DIR = TermuxService.HOME_PATH + "/.config/termux";
+    private static final String TERMUX_XDG_CONF_PROFILES_DIR = TERMUX_XDG_CONF_DIR + "/profiles";
+
+    private static final FileFilter PROFILE_FILE_FILTER =
+        (file) -> file.getName().endsWith(".properties") && file.isFile();
+
+    final LinkedHashMap<String, TermuxProfile> termuxProfiles = new LinkedHashMap<>();
     private boolean mScreenAlwaysOn;
     private int mFontSize;
-
-    @AsciiBellBehaviour
-    int mBellBehaviour = BELL_VIBRATE;
-
-    boolean mBackIsEscape;
-    boolean mDisableVolumeVirtualKeys;
     boolean mShowExtraKeys;
-
-    String[][] mExtraKeys;
-
-    final List<KeyboardShortcut> shortcuts = new ArrayList<>();
 
     /**
      * If value is not in the range [min, max], set it to either min or max.
@@ -128,10 +150,6 @@ final class TermuxPreferences {
         return mScreenAlwaysOn;
     }
 
-    boolean isUsingBlackUI() {
-        return mUseDarkUI.toLowerCase().equals("true");
-    }
-
     void setScreenAlwaysOn(Context context, boolean newValue) {
         mScreenAlwaysOn = newValue;
         PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(SCREEN_ALWAYS_ON_KEY, newValue).apply();
@@ -141,20 +159,66 @@ final class TermuxPreferences {
         PreferenceManager.getDefaultSharedPreferences(context).edit().putString(TermuxPreferences.CURRENT_SESSION_KEY, session.mHandle).apply();
     }
 
-    static TerminalSession getCurrentSession(TermuxActivity context) {
+    static int getCurrentSessionIndex(TermuxActivity context) {
         String sessionHandle = PreferenceManager.getDefaultSharedPreferences(context).getString(TermuxPreferences.CURRENT_SESSION_KEY, "");
         for (int i = 0, len = context.mTermService.getSessions().size(); i < len; i++) {
             TerminalSession session = context.mTermService.getSessions().get(i);
-            if (session.mHandle.equals(sessionHandle)) return session;
+            if (session.mHandle.equals(sessionHandle)) return i;
         }
-        return null;
+        return -1;
     }
-    
-    void reloadFromProperties(Context context) {
-        File propsFile = new File(TermuxService.HOME_PATH + "/.termux/termux.properties");
-        if (!propsFile.exists())
-            propsFile = new File(TermuxService.HOME_PATH + "/.config/termux/termux.properties");
 
+    private void loadProfile(Context context, String profileId, Properties props) {
+        TermuxProfile profile = termuxProfiles.computeIfAbsent(profileId, (key) ->
+            new TermuxProfile());
+
+        profile.id = profileId;
+        profile.displayName = props.getProperty("profile-display-name", profileId);
+
+        switch (props.getProperty("bell-character", "vibrate")) {
+            case "beep":
+                profile.mBellBehaviour = BELL_BEEP;
+                break;
+            case "ignore":
+                profile.mBellBehaviour = BELL_IGNORE;
+                break;
+            default: // "vibrate".
+                profile.mBellBehaviour = BELL_VIBRATE;
+                break;
+        }
+
+        profile.mUseDarkUI = props.getProperty("use-black-ui", "false");
+
+        try {
+            JSONArray arr = new JSONArray(props.getProperty("extra-keys", "[['ESC', 'TAB', 'CTRL', 'ALT', '-', 'DOWN', 'UP']]"));
+
+            profile.mExtraKeys = new String[arr.length()][];
+            for (int i = 0; i < arr.length(); i++) {
+                JSONArray line = arr.getJSONArray(i);
+                profile.mExtraKeys[i] = new String[line.length()];
+                for (int j = 0; j < line.length(); j++) {
+                    profile.mExtraKeys[i][j] = line.getString(j);
+                }
+            }
+        } catch (JSONException e) {
+            Toast.makeText(context, "Could not load the extra-keys property from the config: " + e.toString(), Toast.LENGTH_LONG).show();
+            Log.e("termux", "Error loading props", e);
+            profile.mExtraKeys = new String[0][];
+        }
+
+        profile.mBackIsEscape = "escape".equals(props.getProperty("back-key", "back"));
+        profile.mDisableVolumeVirtualKeys = "volume".equals(props.getProperty("volume-keys", "virtual"));
+
+        profile.mUseCurrentSessionCwd = "current".equals(props.getProperty("session.cwd-on-create", "default"));
+
+        profile.shortcuts.clear();
+        parseAction("shortcut.create-session", SHORTCUT_ACTION_CREATE_SESSION, props, profile);
+        parseAction("shortcut.next-session", SHORTCUT_ACTION_NEXT_SESSION, props, profile);
+        parseAction("shortcut.previous-session", SHORTCUT_ACTION_PREVIOUS_SESSION, props, profile);
+        parseAction("shortcut.rename-session", SHORTCUT_ACTION_RENAME_SESSION, props, profile);
+    }
+
+    private void loadProfile(Context context, String profileId, File propsFile) {
         Properties props = new Properties();
         try {
             if (propsFile.isFile() && propsFile.canRead()) {
@@ -163,52 +227,60 @@ final class TermuxPreferences {
                 }
             }
         } catch (IOException e) {
-            Toast.makeText(context, "Could not open properties file termux.properties.", Toast.LENGTH_LONG).show();
+            Toast.makeText(context, "Could not open properties file " + propsFile.getName() + ".", Toast.LENGTH_LONG).show();
             Log.e("termux", "Error loading props", e);
         }
-
-        switch (props.getProperty("bell-character", "vibrate")) {
-            case "beep":
-                mBellBehaviour = BELL_BEEP;
-                break;
-            case "ignore":
-                mBellBehaviour = BELL_IGNORE;
-                break;
-            default: // "vibrate".
-                mBellBehaviour = BELL_VIBRATE;
-                break;
-        }
-
-        mUseDarkUI = props.getProperty("use-black-ui", "false");
-
-        try {
-            JSONArray arr = new JSONArray(props.getProperty("extra-keys", "[['ESC', 'TAB', 'CTRL', 'ALT', '-', 'DOWN', 'UP']]"));
-
-            mExtraKeys = new String[arr.length()][];
-            for (int i = 0; i < arr.length(); i++) {
-                JSONArray line = arr.getJSONArray(i);
-                mExtraKeys[i] = new String[line.length()];
-                for (int j = 0; j < line.length(); j++) {
-                    mExtraKeys[i][j] = line.getString(j);
-                }
-            }
-        } catch (JSONException e) {
-            Toast.makeText(context, "Could not load the extra-keys property from the config: " + e.toString(), Toast.LENGTH_LONG).show();
-            Log.e("termux", "Error loading props", e);
-            mExtraKeys = new String[0][];
-        }
-
-        mBackIsEscape = "escape".equals(props.getProperty("back-key", "back"));
-        mDisableVolumeVirtualKeys = "volume".equals(props.getProperty("volume-keys", "virtual"));
-
-        shortcuts.clear();
-        parseAction("shortcut.create-session", SHORTCUT_ACTION_CREATE_SESSION, props);
-        parseAction("shortcut.next-session", SHORTCUT_ACTION_NEXT_SESSION, props);
-        parseAction("shortcut.previous-session", SHORTCUT_ACTION_PREVIOUS_SESSION, props);
-        parseAction("shortcut.rename-session", SHORTCUT_ACTION_RENAME_SESSION, props);
+        loadProfile(context, profileId, props);
     }
 
-    private void parseAction(String name, int shortcutAction, Properties props) {
+    private static String getFileNameWithoutExtension(File profileFile) {
+        final String fileName = profileFile.getName();
+        final int lastDotIndex = fileName.lastIndexOf('.');
+
+        if (lastDotIndex > 0) {
+            return fileName.substring(0, lastDotIndex);
+        }
+        return null;
+    }
+
+    int getProfileCount() {
+        return termuxProfiles.size();
+    }
+
+    TermuxProfile getProfileById(String id) {
+        return termuxProfiles.get(id);
+    }
+
+    void reloadFromProperties(Context context) {
+        File defaultPropsFile = new File(TERMUX_CONF_DIR, "termux.properties");
+        if (!defaultPropsFile.exists())
+            defaultPropsFile = new File(TERMUX_XDG_CONF_DIR, "termux.properties");
+
+        termuxProfiles.clear();
+        loadProfile(context, DEFAULT_PROFILE_ID, defaultPropsFile);
+        try {
+            File[] profileFiles = new File(TERMUX_CONF_PROFILES_DIR).listFiles(
+                PROFILE_FILE_FILTER);
+
+            if (profileFiles == null || profileFiles.length == 0) {
+                profileFiles = new File(TERMUX_XDG_CONF_PROFILES_DIR).listFiles(
+                    PROFILE_FILE_FILTER);
+            }
+            if (profileFiles != null) {
+                for (File propsFile : profileFiles) {
+                    final String profileId = getFileNameWithoutExtension(propsFile);
+
+                    if (profileId != null)
+                        loadProfile(context, profileId, propsFile);
+                }
+            }
+        } catch (SecurityException e) {
+            Toast.makeText(context, "Could not list profiles.", Toast.LENGTH_LONG).show();
+            Log.e("termux", "Error listing profiles", e);
+        }
+    }
+
+    private void parseAction(String name, int shortcutAction, Properties props, TermuxProfile profile) {
         String value = props.getProperty(name);
         if (value == null) return;
         String[] parts = value.toLowerCase().trim().split("\\+");
@@ -228,7 +300,6 @@ final class TermuxPreferences {
                 codePoint = Character.toCodePoint(input.charAt(1), c);
             }
         }
-        shortcuts.add(new KeyboardShortcut(codePoint, shortcutAction));
+        profile.shortcuts.add(new KeyboardShortcut(codePoint, shortcutAction));
     }
-
 }

@@ -46,7 +46,7 @@ public final class TermuxViewClient implements TerminalViewClient {
 
     @Override
     public boolean shouldBackButtonBeMappedToEscape() {
-        return mActivity.mSettings.mBackIsEscape;
+        return mActivity.mCurrentProfile.mBackIsEscape;
     }
 
     @Override
@@ -97,7 +97,7 @@ public final class TermuxViewClient implements TerminalViewClient {
                 int num = unicodeChar - '1';
                 TermuxService service = mActivity.mTermService;
                 if (service.getSessions().size() > num)
-                    mActivity.switchToSession(service.getSessions().get(num));
+                    mActivity.switchToSession(num);
             }
             return true;
         }
@@ -228,7 +228,8 @@ public final class TermuxViewClient implements TerminalViewClient {
                 return true;
             }
 
-            List<TermuxPreferences.KeyboardShortcut> shortcuts = mActivity.mSettings.shortcuts;
+            List<TermuxPreferences.KeyboardShortcut> shortcuts = mActivity.mCurrentProfile
+                .shortcuts;
             if (!shortcuts.isEmpty()) {
                 int codePointLowerCase = Character.toLowerCase(codePoint);
                 for (int i = shortcuts.size() - 1; i >= 0; i--) {
@@ -264,7 +265,7 @@ public final class TermuxViewClient implements TerminalViewClient {
     /** Handle dedicated volume buttons as virtual keys if applicable. */
     private boolean handleVirtualKeys(int keyCode, KeyEvent event, boolean down) {
         InputDevice inputDevice = event.getDevice();
-        if (mActivity.mSettings.mDisableVolumeVirtualKeys) {
+        if (mActivity.mCurrentProfile.mDisableVolumeVirtualKeys) {
             return false;
         } else if (inputDevice != null && inputDevice.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
             // Do not steal dedicated buttons from a full external keyboard.
